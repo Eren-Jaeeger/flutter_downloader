@@ -4,13 +4,13 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
-import java.lang.Exception
 import java.net.URLConnection
-import kotlin.jvm.Synchronized
+import java.util.*
 
 object IntentUtils {
     private fun buildIntent(context: Context, file: File, mime: String?): Intent {
@@ -33,40 +33,48 @@ object IntentUtils {
     @Synchronized
     fun validatedFileIntent(context: Context, path: String, contentType: String?): Intent? {
         val file = File(path)
-        var intent = buildIntent(context, file, contentType)
-        if (canBeHandled(context, intent)) {
-            return intent
-        }
-        var mime: String? = null
-        var inputFile: FileInputStream? = null
-        try {
-            inputFile = FileInputStream(path)
-            mime = URLConnection.guessContentTypeFromStream(inputFile) // fails sometimes
-        } catch (e: Exception) {
-            e.printStackTrace()
-        } finally {
-            if (inputFile != null) {
-                try {
-                    inputFile.close()
-                } catch (e: IOException) {
-                    e.printStackTrace()
+        var mime: String? = contentType
+
+        // Step 1: Check if initial contentType is valid
+        if (mime.isNullOrBlank() || mime == "*/*" || mime == "application/octet-stream") {
+            // Step 2: Try to guess from file stream
+            try {
+                FileInputStream(path).use { input ->
+                    mime = URLConnection.guessContentTypeFromStream(input)
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            // Step 3: Fallback to extension-based MIME detection
+            if (mime.isNullOrBlank()) {
+                mime = URLConnection.guessContentTypeFromName(path)
+            }
+            if (mime.isNullOrBlank()) {
+                mime = getMimeTypeFromExtension(path)
+            }
+
+            if (mime.isNullOrBlank()) {
+                mime = "*/*" // Final fallback
             }
         }
-        if (mime == null) {
-            mime = URLConnection.guessContentTypeFromName(path) // fallback to check file extension
-        }
-        if (mime != null) {
-            intent = buildIntent(context, file, mime)
-            if (canBeHandled(context, intent)) return intent
-        }
-        return null
+
+        var intent = buildIntent(context, file, mime)
+        return if (canBeHandled(context, intent)) intent else null
     }
 
     private fun canBeHandled(context: Context, intent: Intent): Boolean {
         val manager = context.packageManager
         val results = manager.queryIntentActivities(intent, 0)
-        // return if there is at least one app that can handle this intent
-        return results.size > 0
+        return results.isNotEmpty()
+    }
+
+    private fun getMimeTypeFromExtension(path: String): String? {
+        val extension = MimeTypeMap.getFileExtensionFromUrl(path)
+            ?: File(path).extension
+            ?: return null
+
+        return MimeTypeMap.getSingleton()
+            .getMimeTypeFromExtension(extension.lowercase(Locale.getDefault()))
     }
 }
