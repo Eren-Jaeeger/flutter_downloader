@@ -1,5 +1,7 @@
 #import "FlutterDownloaderPlugin.h"
 #import "FlutterDownloaderDBManager.h"
+#import <UserNotifications/UserNotifications.h>
+
 
 #define STATUS_UNDEFINED 0
 #define STATUS_ENQUEUED 1
@@ -1024,7 +1026,6 @@ static NSMutableDictionary<NSString*, NSMutableDictionary*> *_runningTaskById = 
 
 - (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didFinishDownloadingToURL:(NSURL *)location
 {
-    
     NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *) downloadTask.response;
     long httpStatusCode = (long)[httpResponse statusCode];
     
@@ -1063,6 +1064,28 @@ static NSMutableDictionary<NSString*, NSMutableDictionary*> *_runningTaskById = 
             [self executeInDatabaseQueueForTask:^{
                 [weakSelf updateTask:taskId status:STATUS_COMPLETE progress:100];
             }];
+            
+            // ✅ Show local notification with file path to open on tap
+            BOOL showNotification = [task[KEY_SHOW_NOTIFICATION] boolValue];
+            BOOL openFileFromNotification = [task[KEY_OPEN_FILE_FROM_NOTIFICATION] boolValue];
+            NSString *filename = task[KEY_FILE_NAME];
+
+            if (showNotification) {
+                UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
+                content.title = @"Download Complete";
+                content.body = filename ?: @"File downloaded successfully.";
+                content.sound = [UNNotificationSound defaultSound];
+
+                if (openFileFromNotification) {
+                    content.userInfo = @{@"filePath": destinationURL.path};
+                }
+
+                UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:taskId
+                                                                                      content:content
+                                                                                      trigger:nil];
+                [[UNUserNotificationCenter currentNotificationCenter] addNotificationRequest:request withCompletionHandler:nil];
+            }
+
         } else {
             if (debug) {
                 NSLog(@"Unable to copy temp file. Error: %@", [error localizedDescription]);
@@ -1074,6 +1097,8 @@ static NSMutableDictionary<NSString*, NSMutableDictionary*> *_runningTaskById = 
         }
     }
 }
+
+
 
 -(void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error
 {
